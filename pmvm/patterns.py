@@ -1,11 +1,11 @@
 
 from pmvm.vm import INPUT
-from pmvm.vm import MATCH
-from pmvm.vm import SPLIT
-from pmvm.vm import JUMP
+from pmvm.vm import MATCH#, NOMATCH
+from pmvm.vm import SPLIT, JUMP, EQUAL
+from pmvm.vm import SET, ADD
 from pmvm.vm import VM_STATE
-from pmvm.vm import run_machine
-
+from pmvm.vm import vm_run, vm_init, vm_is_finished
+from pmvm.vm import get_machine_expected_inputs
 
 #----------------------------------------------------------------------#
 #                                                                      #
@@ -18,6 +18,12 @@ class BasePatternMachine(object):
 
     def compile(self, start_pos=0, end_program=True):
         raise Exception("Not implemented")
+
+    def toString(self):
+        raise Exception("Not implemented")
+
+    def __str__(self):
+        return self.toString()
 
 #----------------------------------------------------------------------#
 #                                                                      #
@@ -50,6 +56,9 @@ class SinglePattern(BasePatternMachine):
 
         return program
 
+    def toString(self):
+        return "<%s>" % (self.name)
+        
 #----------------------------------------------------------------------#
 #                                                                      #
 #----------------------------------------------------------------------#
@@ -91,6 +100,9 @@ class SequencePattern(BasePatternMachine):
             program.append(  MATCH() )
         
         return program
+
+    def toString(self):
+        return "(" + ','.join([ str(p) for p in self.patterns ]) + ")"
 
 #----------------------------------------------------------------------#
 #                                                                      #
@@ -149,6 +161,9 @@ class AlternativePattern(BasePatternMachine):
 
         return program
 
+    def toString(self):
+        return "(" + '|'.join([ str(p) for p in self.patterns ]) + ")"
+
 #----------------------------------------------------------------------#
 #                                                                      #
 #----------------------------------------------------------------------#
@@ -186,6 +201,9 @@ class OptionalPattern(BasePatternMachine):
             program.append( MATCH() )
 
         return program
+
+    def toString(self):
+        return "(" + str(self.pattern) + ")?"
 
 #----------------------------------------------------------------------#
 #                                                                      #
@@ -225,6 +243,9 @@ class RepetitionPattern(BasePatternMachine):
             program.append( MATCH() )
         
         return program
+
+    def toString(self):
+        return "(" + str(self.pattern) + ")+"
 
 #----------------------------------------------------------------------#
 #                                                                      #
@@ -268,17 +289,20 @@ class StarRepetitionPattern(BasePatternMachine):
     def compile(self, start_pos=0, end_program=True):
         return self.pattern.compile(start_pos=start_pos, end_program=end_program)
 
+    def toString(self):
+        return "(" + str(self.pattern) + ")*"
+
 #----------------------------------------------------------------------#
 #                                                                      #
 #----------------------------------------------------------------------#
 
-class MinMaxRepetitionPattern(BasePatternMachine):
+class MinMaxRepetitionPattern_OLD(BasePatternMachine):
     """
     Pattern:
             A+{min,max} 
             
-            A A A  A A A
-        -min-> -max->
+            A A A  A A A A
+           -min->  -max->
     VM:
           : code A
           : code A
@@ -314,7 +338,7 @@ class MinMaxRepetitionPattern(BasePatternMachine):
         #  : code A
         #  : code A
         #  : code A
-        for n in xrange(self.min):
+        for n in range(self.min):
             compiled = self.pattern.compile(start_pos=start_pos, end_program=False)
             program += compiled
             start_pos += len(compiled)
@@ -322,7 +346,7 @@ class MinMaxRepetitionPattern(BasePatternMachine):
         #
         #  : SPLIT(LE,LM)
         LM_pos = start_pos + 1
-        LE_pos = LM_pos + (2 * (self.max-self.min)) - 1
+        LE_pos = LM_pos + (len(compiled) * (self.max-self.min)) + (1 * (self.max-self.min-1))
 
         program.append( SPLIT([LE_pos, LM_pos]) )
         start_pos += 1
@@ -331,7 +355,7 @@ class MinMaxRepetitionPattern(BasePatternMachine):
         #
         #  : SPLIT(+1,LE)
         
-        for n in xrange(self.max-self.min):
+        for n in range(self.max-self.min):
             compiled = self.pattern.compile(start_pos=start_pos, end_program=False)
             program += compiled
             start_pos += len(compiled)
@@ -344,43 +368,157 @@ class MinMaxRepetitionPattern(BasePatternMachine):
 
         return program
 
+    def toString(self):
+        return "(" + str(self.pattern) + "){%s,%s}+" % (self.min, self.max)
+
 #----------------------------------------------------------------------#
 #                                                                      #
 #----------------------------------------------------------------------#
 
+
+class MinMaxRepetitionPattern(BasePatternMachine):
+    """
+    Pattern:
+            A+{N,M} 
+            
+              A A A  A A A A A
+              --N->  ----M--->
+    VM:
+           : SET(0)             1
+        LO :                    2 
+           :  code A
+        LA : ADD(1)             
+        L1 : EQUAL(N  , LN)     +1      matched N times?
+        L2 : EQUAL(M  , LM)     +2      matched M times?
+        L3 : EQUAL(M+1, LX)     +3      matched > M times?
+        L  : JUMP(LO)           +4
+
+        LN : MATCH()            +5
+             SPLIT(END, L0)     +6
+
+        LM : SPLIT(END, L0)     +7
+
+        LX : MATCH(0)           +8
+        
+        END:                    +9
+             
+    """
+    def __init__(self, name, pattern, min=1, max=None):
+        super(MinMaxRepetitionPattern, self).__init__(name)
+
+        self.pattern = pattern
+        self.min     = min
+        self.max     = max
+
+    def compile(self, start_pos=0, end_program=True):
+
+        program = []
+
+        #   : SET(r,0)
+        program.append( SET(0) )
+
+        #L0 : code A
+        L0_pos = len(program)
+        compiled = self.pattern.compile(start_pos=L0_pos, end_program=False)
+        program += compiled
+
+        #LA : ADD(1)
+        LA_pos = len(program)
+        program.append( ADD(1) )
+
+        #L1 : EQUAL(N  , LN)
+        #L2 : EQUAL(M  , LM)
+        #L3 : EQUAL(M+1, LX)
+        program.append( EQUAL(self.min  , LA_pos+5) )
+        program.append( EQUAL(self.max  , LA_pos+7) )
+        program.append( EQUAL(self.max+1, LA_pos+8) )
+
+        #L  : JUMP(LO)
+        program.append( JUMP(L0_pos) )
+           
+        #LN : SPLIT(END, L0)
+        program.append( MATCH() )
+        program.append( SPLIT([LA_pos+9, L0_pos]) )
+
+        #LM : SPLIT(END, L0)
+        program.append( SPLIT([LA_pos+9, L0_pos]) )
+        
+        #LX : MATCH(0)
+        program.append( MATCH(False) )
+          
+
+        #END:
+        
+        #if end_program == True:
+        #    program.append( MATCH() )
+
+        return program
+
+    def toString(self):
+        return "(" + str(self.pattern) + "){%s,%s}+" % (self.min, self.max)
+
+
+
+
 if __name__ == "__main__":
+
+    import sys
+    
+    input_string = sys.argv[1]
 
     def PRINT(p):
         for n, r in enumerate(p):
-            print n, r
+            print(n, r)
 
     import pprint
 
+    p  = SinglePattern('A', 'a')
+    
     p1 = SinglePattern('A', 'a')
     p2 = SinglePattern('B', 'b')
     p3 = SinglePattern('C', 'c')
+    p = AlternativePattern('Alternative', [p1,p2,p3])
     #
-    #p = AlternativePattern('Alternative', [p1,p2,p3])
-
-    #p = RepetitionPattern('R', p1)
-    #p = SequencePattern('S', [p3, p])
+    #p = SequencePattern('S', [p1, p2, p3])
+    #p = RepetitionPattern('R', p)
     #p = StarRepetitionPattern('*', p1)
-    p = MinMaxRepetitionPattern('minmax', p1, 2, 4)
-    
-    p = SequencePattern('S', [p, p3])
+    p = MinMaxRepetitionPattern('minmax', p, 2, 4)
+    #p = SequencePattern('S', [p, p3])
 
+    print("PATTERN", p)
+    print("INPUT  ", input_string)
     
+
+    print("-----------PROGRAM------------")
     program = p.compile()
-
     PRINT(program)
+    print("-------------END--------------")
 
-    state = VM_STATE()
-    run_machine(state, program, 'a')
-    #run_machine(state, program, 'a')
-    #run_machine(state, program, 'c')
-    #run_machine(state, program, 'a')
-    #run_machine(state, program, 'a')
-    #run_machine(state, program, 'a')
-    run_machine(state, program, 'c')
+    vm_state = VM_STATE()
 
-    print state['matched']
+    vm_init(vm_state, program)
+    
+    while input_string:
+        c = input_string[0]
+        input_string = input_string[1:]
+
+        expected = get_machine_expected_inputs(vm_state, program )
+
+        print( expected, "->", c)
+        
+        vm_run(vm_state, program, c)
+
+        print("vm threads:         = ", )
+        for tid, t in sorted(vm_state['threads'].items()):
+            print("\t", t)
+        print("vm status: finished = ", vm_is_finished(vm_state))
+        print("vm status: matched  = ", vm_state['matched'    ])
+        print("vm status: group    = ", vm_state['input_group'])
+
+        if (vm_is_finished(vm_state)):
+            print("FINISHED")
+            break
+        
+    for i,r in enumerate(program): print("%3d %s %s" % (i, r[0],r[1]) )
+    print(">>>>>>>>>>> FINISH >>>>>>>>>>")
+    print("Remaining:", input_string)	

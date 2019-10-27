@@ -29,7 +29,7 @@ if __name__ == "__main__":
 
     def PRINT(p):
         for n, r in enumerate(p):
-            print n, r
+            print(n, r)
 
     import pprint
 
@@ -40,14 +40,14 @@ if __name__ == "__main__":
 
     program = p.compile()
 
-    print "*" * 80
-    print "PROGRAM"
-    print "*" * 80
+    print("*" * 80)
+    print("PROGRAM")
+    print("*" * 80)
     PRINT(program)
 
-    print "*" * 80
-    print "EXECUTION"
-    print "*" * 80
+    print("*" * 80)
+    print("EXECUTION")
+    print("*" * 80)
 
     state = VM_STATE()
     run_machine(state, program, {'key': 'a'} )
@@ -65,7 +65,7 @@ if __name__ == "__main__":
     #run_machine(state, program, 'c')
 
 
-    print "*" * 80
-    print "RESULT"
-    print "*" * 80
-    print state['matched']
+    print("*" * 80)
+    print("RESULT")
+    print("*" * 80)
+    print(state['matched'])
