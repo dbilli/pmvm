@@ -1,10 +1,31 @@
+"""
+    Pattern:
+    
+         I{in=<seconds>}(a)
 
-from pmvm.vm import INPUT
-from pmvm.vm import MATCH#, NOMATCH
-from pmvm.vm import SPLIT, JUMP, EQUAL
-from pmvm.vm import SET, ADD
+    VM:
+         : ALARM n
+         : CLOCK 
+         
+         : a
+         
+         : LTE n P1
+         : MATCH(0)
+         : JUMP END
+         
+       P1: MATCH(1)
+         : 
+
+        E: EXITCONTEXT 
+      
+      END:
+"""
+
+
+from pmvm.vm import INPUT, MATCH, FORK, JUMP, EQUAL, SET, ADD, LT, SETTIMER
+from pmvm.vm import STACKPUSHV, STACKGET, STACKPOP, STACKSET, STACKSETV
 from pmvm.vm import VM_STATE
-from pmvm.vm import vm_run, vm_init, vm_is_finished
+from pmvm.vm import vm_run, vm_init, vm_is_finished, vm_set_input, vm_run_all_threads, vm_set_clock
 from pmvm.vm import get_machine_expected_inputs
 
 #----------------------------------------------------------------------#
@@ -29,11 +50,11 @@ class BasePatternMachine(object):
 #                                                                      #
 #----------------------------------------------------------------------#
 
-class SinglePattern(BasePatternMachine):
+class InputPattern(BasePatternMachine):
     """
     Pattern:
     
-        a
+        I(a)
     
     VM:
           : INPUT(a)
@@ -41,7 +62,7 @@ class SinglePattern(BasePatternMachine):
           : MATCH()
     """
     def __init__(self, name, input_handler):
-        super(SinglePattern, self).__init__(name)
+        super(InputPattern, self).__init__(name)
 
         self.input_handler = input_handler
 
@@ -57,8 +78,44 @@ class SinglePattern(BasePatternMachine):
         return program
 
     def toString(self):
-        return "<%s>" % (self.name)
-        
+        return "I(%s)" % (self.name)
+
+
+#----------------------------------------------------------------------#
+#                                                                      #
+#----------------------------------------------------------------------#
+
+class InputWithTimer(InputPattern):
+    """
+    Pattern:
+    
+         I{in=<seconds>}(a)
+
+    VM:
+         : SETTIMER n
+         : INPUT a 
+      END:
+    """
+    def __init__(self, name, seconds, input_handler):
+        super(InputWithTimer, self).__init__(name, input_handler)
+
+        self.seconds       = seconds
+
+    def compile(self, start_pos=0, end_program=True):
+
+        program = []
+
+        program.append( SETTIMER(self.seconds) )
+        program.append( INPUT(self.input_handler) )
+
+        if end_program == True:
+            program.append( MATCH() )
+
+        return program
+
+    def toString(self):
+        return "I{in=%s}(%s)" % (self.name)
+
 #----------------------------------------------------------------------#
 #                                                                      #
 #----------------------------------------------------------------------#
@@ -67,7 +124,7 @@ class SequencePattern(BasePatternMachine):
     """
     Pattern:
     
-        ABC
+        (ABC)
         
     VM:
           : code A
@@ -84,9 +141,12 @@ class SequencePattern(BasePatternMachine):
     def compile(self, start_pos=0, end_program=True):
 
         #
-        # a | b | c
+        # a b c
         #
         program = []
+        
+        program.append(  MATCH(False) )
+        start_pos += 1
 
         sub_program_pos = start_pos
         for pattern in self.patterns:
@@ -112,10 +172,10 @@ class AlternativePattern(BasePatternMachine):
     """
     Pattern:
     
-        A|B|C
+        (A|B|C)
         
     VM:
-          : SPLIT(L1,L2,L3)
+          : FORK(L2,L3)
         L1: code A
           : JUMP(L4)
         L2: code B
@@ -148,9 +208,9 @@ class AlternativePattern(BasePatternMachine):
 
             sub_program_pos += len(compiled) + 1
         
-        jumps = [ (start_pos+pos+1) for pos, prog in sub_programs ]
+        jumps = [ (start_pos+pos+1) for pos, prog in sub_programs[1:] ]
 
-        program.append( SPLIT(jumps) )
+        program.append( FORK(jumps) )
 
         for pos, subprogram in sub_programs:
             program += subprogram
@@ -172,13 +232,12 @@ class OptionalPattern(BasePatternMachine):
     """
     Pattern:
     
-        A?
+        (A)?
         
     VM:
-          : SPLIT(L1,L2)
+          : FORK(L2)
         L1: code A
         L2: 
-        
           : MATCH()
     """
     
@@ -193,7 +252,7 @@ class OptionalPattern(BasePatternMachine):
 
         compiled = self.pattern.compile(start_pos=(start_pos + 1), end_program=False)
 
-        program.append(  SPLIT( [start_pos+1, start_pos+len(compiled)+1] ) )
+        program.append(  FORK( [start_pos+len(compiled)+1] ) )
 
         program += compiled
 
@@ -213,12 +272,11 @@ class RepetitionPattern(BasePatternMachine):
     """
     Pattern:
     
-        A+
+        (A)+
         
     VM:
         L1: code A
-          : SPLIT(L1,L2)
-        L2: 
+          : FORK(L1)
         
           : MATCH()
     """
@@ -237,10 +295,10 @@ class RepetitionPattern(BasePatternMachine):
 
         end_pos = start_pos + len(compiled) + 1
 
-        program.append( SPLIT( [start_pos, end_pos] ) )
+        program.append( FORK( [start_pos] ) )
 
         if end_program == True:
-            program.append( MATCH() )
+            program.append( MATCH(1) )
         
         return program
 
@@ -255,30 +313,31 @@ class StarRepetitionPattern(BasePatternMachine):
     """
     Pattern:
     
-        A*
+        (A)*
     
     VM 1:
-        L1: SPLIT(L2, L3)
-        L2: code A
+        L1: FORK(L3)
+          : code A
           : JUMP(L1)
         L3: 
         
           : MATCH()
+
+
+    ComposedPattern:
     
-    Pattern:
-    
-        A+?
+        (A+)?
     
     VM:
-          : SPLIT(L1,L2)
-        L1: 
-        
-        L3: code A
-          : SPLIT(L3,L4)
-        L4: 
-        
-        L2: 
-        
+
+          : FORK(L?)         \
+                             |
+        L+:            \     |
+          : code A     | A+  | ?
+          : FORK(L+)   /     |
+                             |
+        L?:                  /
+
           : MATCH()
     """
     def __init__(self, name, pattern):
@@ -296,114 +355,41 @@ class StarRepetitionPattern(BasePatternMachine):
 #                                                                      #
 #----------------------------------------------------------------------#
 
-class MinMaxRepetitionPattern_OLD(BasePatternMachine):
-    """
-    Pattern:
-            A+{min,max} 
-            
-            A A A  A A A A
-           -min->  -max->
-    VM:
-          : code A
-          : code A
-          : code A
-          
-          : SPLIT(LE,LM)
-          
-        LM:
-        
-          : code A
-          : SPLIT(+1,LE)
-
-          : code A
-          : SPLIT(+1,LE)
-
-          : code A
-
-        LE:
-        
-          : MATCH()
-    """
-    def __init__(self, name, pattern, min=1, max=None):
-        super(MinMaxRepetitionPattern, self).__init__(name)
-
-        self.pattern = pattern
-        self.min     = min
-        self.max     = max
-
-    def compile(self, start_pos=0, end_program=True):
-
-        program = []
-
-        #  : code A
-        #  : code A
-        #  : code A
-        for n in range(self.min):
-            compiled = self.pattern.compile(start_pos=start_pos, end_program=False)
-            program += compiled
-            start_pos += len(compiled)
-
-        #
-        #  : SPLIT(LE,LM)
-        LM_pos = start_pos + 1
-        LE_pos = LM_pos + (len(compiled) * (self.max-self.min)) + (1 * (self.max-self.min-1))
-
-        program.append( SPLIT([LE_pos, LM_pos]) )
-        start_pos += 1
-
-        #  : code A
-        #
-        #  : SPLIT(+1,LE)
-        
-        for n in range(self.max-self.min):
-            compiled = self.pattern.compile(start_pos=start_pos, end_program=False)
-            program += compiled
-            start_pos += len(compiled)
-
-            if n < (self.max-self.min-1):
-                program.append( SPLIT([LE_pos, start_pos + 1]) )
-
-        if end_program == True:
-            program.append( MATCH() )
-
-        return program
-
-    def toString(self):
-        return "(" + str(self.pattern) + "){%s,%s}+" % (self.min, self.max)
-
-#----------------------------------------------------------------------#
-#                                                                      #
-#----------------------------------------------------------------------#
-
-
 class MinMaxRepetitionPattern(BasePatternMachine):
     """
     Pattern:
-            A+{N,M} 
+            (A){N,M}+ 
             
               A A A  A A A A A
               --N->  ----M--->
     VM:
-           : SET(0)             1
-        LO :                    2 
-           :  code A
-        LA : ADD(1)             
-        L1 : EQUAL(N  , LN)     +1      matched N times?
-        L2 : EQUAL(M  , LM)     +2      matched M times?
-        L3 : EQUAL(M+1, LX)     +3      matched > M times?
-        L  : JUMP(LO)           +4
+        S  : STACKPUSHV(-1)             ret = -1
+             STACKPUSHV(0)              count = 0
+           
+        LO : ...
+             code A
+             ...
 
-        LN : MATCH()            +5
-             SPLIT(END, L0)     +6
+        LA : STACKGET(-1)        LA+0      read count
+           : ADD(1)              LA+1      count = count + 1 
+           : STACKSET(-1)        LA+2      save count
+                                      
+        X  : LT(N, L0)           LA+3      N
+           : STACKSETV(-2,0)     LA+4      MATCHED ret = 0. 
 
-        LM : SPLIT(END, L0)     +7
-
-        LX : MATCH(0)           +8
+        Y  : FORK(END)           LA+5      M
+           : LT(M, L0)           LA+6      
         
-        END:                    +9
-             
+           : STACKSETV(-2,-1)    LA+7      NOT MACHED (M > 0).  ret=-1
+
+        END: 
+           : STACKGET(-2)        LA+8      r0 = ret
+           : STACKPOP(2)         LA+9      del ret,count
+           
+        FIN:                     LA+10 
+        
     """
-    def __init__(self, name, pattern, min=1, max=None):
+    def __init__(self, name, min, max, pattern):
         super(MinMaxRepetitionPattern, self).__init__(name)
 
         self.pattern = pattern
@@ -413,42 +399,48 @@ class MinMaxRepetitionPattern(BasePatternMachine):
     def compile(self, start_pos=0, end_program=True):
 
         program = []
+        
+        pos = start_pos
 
-        #   : SET(r,0)
-        program.append( SET(0) )
+        #S  : STACKPUSHV(-1)             ret = -1
+        #     STACKPUSHV(0)              count = 0
+        program.append( STACKPUSHV(-1) )
+        program.append( STACKPUSHV(0) )
 
         #L0 : code A
-        L0_pos = len(program)
+        L0_pos = pos + len(program)
         compiled = self.pattern.compile(start_pos=L0_pos, end_program=False)
+        compiled_len = len(compiled)
         program += compiled
 
-        #LA : ADD(1)
-        LA_pos = len(program)
+        #LA : STACKGET(-1)        LA+0      read count
+        #   : ADD(1)              LA+1      count = count + 1 
+        #   : STACKSET(-1)        LA+2      save count
+        LA_pos = L0_pos + compiled_len
+        program.append( STACKGET(-1) )
         program.append( ADD(1) )
+        program.append( STACKSET(-1) )
 
-        #L1 : EQUAL(N  , LN)
-        #L2 : EQUAL(M  , LM)
-        #L3 : EQUAL(M+1, LX)
-        program.append( EQUAL(self.min  , LA_pos+5) )
-        program.append( EQUAL(self.max  , LA_pos+7) )
-        program.append( EQUAL(self.max+1, LA_pos+8) )
-
-        #L  : JUMP(LO)
-        program.append( JUMP(L0_pos) )
-           
-        #LN : SPLIT(END, L0)
-        program.append( MATCH() )
-        program.append( SPLIT([LA_pos+9, L0_pos]) )
-
-        #LM : SPLIT(END, L0)
-        program.append( SPLIT([LA_pos+9, L0_pos]) )
+        #X  : LT(N, L0)           LA+3      N
+        #   : STACKSETV(-2,0)     LA+4
+        program.append( LT(self.min, L0_pos) )
+        program.append( STACKSETV(-2,0) )
         
-        #LX : MATCH(0)
-        program.append( MATCH(False) )
-          
-
-        #END:
+        #Y  : FORK(END)           LA+5      M
+        #   : LT(M, L0)           LA+6      
+        program.append( FORK( [LA_pos+8] ) )
+        program.append( LT(self.max, L0_pos) )
         
+        #   : SETSTACKV(-2,-1)    LA+7
+        program.append( STACKSETV(-2,-1) )
+
+        #END: 
+        #   : STACKGET(-2)        LA+8      r0 = ret
+        #   : STACKPOP(2)         LA+9      del ret,count
+        program.append( STACKGET(-2) )
+        program.append( STACKPOP(2) )
+
+        #FIN:                     LA+9 
         #if end_program == True:
         #    program.append( MATCH() )
 
@@ -460,65 +452,589 @@ class MinMaxRepetitionPattern(BasePatternMachine):
 
 
 
+
+
 if __name__ == "__main__":
 
     import sys
-    
-    input_string = sys.argv[1]
+    import sys
+    import unittest
+    import os.path
 
-    def PRINT(p):
-        for n, r in enumerate(p):
-            print(n, r)
+    from pmvm.vm import DEBUG_FORMAT_PROGRAM, DEBUG_PRINT_PROGRAM, DEBUG
+    from pmvm.vm import vm_is_finished
+    from pmvm.vm import THREAD_TERMINATED, THREAD_WAIT_IO
 
-    import pprint
-
-    p  = SinglePattern('A', 'a')
-    
-    p1 = SinglePattern('A', 'a')
-    p2 = SinglePattern('B', 'b')
-    p3 = SinglePattern('C', 'c')
-    p = AlternativePattern('Alternative', [p1,p2,p3])
-    #
-    #p = SequencePattern('S', [p1, p2, p3])
-    #p = RepetitionPattern('R', p)
-    #p = StarRepetitionPattern('*', p1)
-    p = MinMaxRepetitionPattern('minmax', p, 2, 4)
-    #p = SequencePattern('S', [p, p3])
-
-    print("PATTERN", p)
-    print("INPUT  ", input_string)
-    
-
-    print("-----------PROGRAM------------")
-    program = p.compile()
-    PRINT(program)
-    print("-------------END--------------")
-
-    vm_state = VM_STATE()
-
-    vm_init(vm_state, program)
-    
-    while input_string:
-        c = input_string[0]
-        input_string = input_string[1:]
-
-        expected = get_machine_expected_inputs(vm_state, program )
-
-        print( expected, "->", c)
+    class TestPatterns(unittest.TestCase):
         
-        vm_run(vm_state, program, c)
+        #
+        # InputPattern
+        #            
+        def test_InputPattern(self): 
+            
+            input_sequence = [
+                 # input , expected_input
+                ('a', 'a'),
+            ]
+            
+            p  = InputPattern('A', 'a')
+            program = p.compile()
+            
+            DEBUG_PRINT_PROGRAM(program)
 
-        print("vm threads:         = ", )
-        for tid, t in sorted(vm_state['threads'].items()):
-            print("\t", t)
-        print("vm status: finished = ", vm_is_finished(vm_state))
-        print("vm status: matched  = ", vm_state['matched'    ])
-        print("vm status: group    = ", vm_state['input_group'])
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            for c, expected_input in input_sequence:
+                
+                expected_input_from_machine = get_machine_expected_inputs(vm_state, program )
+                
+                expected_input_from_machine = ''.join(sorted(expected_input_from_machine))
+                self.assertTrue( expected_input_from_machine == expected_input)
+                
+                vm_set_input(vm_state, c)
+                vm_run_all_threads(vm_state, program)
+                
+            self.assertTrue( vm_is_finished(vm_state) == True )
+            self.assertTrue( vm_state['threads'][0]['r0']           == 0 )
 
-        if (vm_is_finished(vm_state)):
-            print("FINISHED")
-            break
+        #
+        # AlternativePattern
+        #            
+        def test_AlternativePattern(self): 
+            
+            input_sequence = [
+                ('a', 'abc'),
+            ]
+            
+            p = AlternativePattern('Alternative', [
+                InputPattern('A', 'a'),
+                InputPattern('B', 'b'),
+                InputPattern('C', 'c'),
+            ])
+            
+            program = p.compile()
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            for c, expected_input in input_sequence:
+                
+                expected_input_from_machine = get_machine_expected_inputs(vm_state, program )
+                
+                expected_input_from_machine = ''.join(sorted(expected_input_from_machine))
+                self.assertTrue( expected_input_from_machine == expected_input)
+                
+                vm_set_input(vm_state, c)
+                vm_run_all_threads(vm_state, program)
+                
+            self.assertTrue( vm_is_finished(vm_state)     == True )
+            self.assertTrue( vm_state['threads'][0]['r0'] ==  0 )   
+            self.assertTrue( vm_state['threads'][1]['r0'] == -1 )   
+            self.assertTrue( vm_state['threads'][2]['r0'] == -1 )   
         
-    for i,r in enumerate(program): print("%3d %s %s" % (i, r[0],r[1]) )
-    print(">>>>>>>>>>> FINISH >>>>>>>>>>")
-    print("Remaining:", input_string)	
+        def test_AlternativePattern2(self): 
+            
+            input_sequence = [
+                ('z', 'abc'),
+            ]
+            
+            p = AlternativePattern('Alternative', [
+                InputPattern('A', 'a'),
+                InputPattern('B', 'b'),
+                InputPattern('C', 'c'),
+            ])
+            
+            program = p.compile()
+            
+            
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            for c, expected_input in input_sequence:
+                
+                expected_input_from_machine = get_machine_expected_inputs(vm_state, program )
+                
+                expected_input_from_machine = ''.join(sorted(expected_input_from_machine))
+                self.assertTrue( expected_input_from_machine == expected_input)
+                
+                vm_set_input(vm_state, c)
+                vm_run_all_threads(vm_state, program)
+                
+            self.assertTrue( vm_is_finished(vm_state) == True   )
+            self.assertTrue( vm_state['threads'][0]['r0'] == -1 )   
+            self.assertTrue( vm_state['threads'][1]['r0'] == -1 )   
+            self.assertTrue( vm_state['threads'][2]['r0'] == -1 )   
+    
+
+        #
+        # SequencePattern
+        #            
+        def test_SequencePattern(self): 
+            
+            input_sequence = [
+                ('a', 'a'),
+                ('b', 'b'),
+                ('c', 'c'),
+            ]
+            
+            p = SequencePattern('S', [
+                InputPattern('A', 'a'),
+                InputPattern('B', 'b'),
+                InputPattern('C', 'c'),
+            ])
+            
+            program = p.compile()
+            
+            DEBUG_PRINT_PROGRAM(program)
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            for c, expected_input in input_sequence:
+                
+                expected_input_from_machine = get_machine_expected_inputs(vm_state, program )
+                
+                expected_input_from_machine = ''.join(sorted(expected_input_from_machine))
+                self.assertTrue( expected_input_from_machine == expected_input)
+                
+                vm_set_input(vm_state, c)
+                vm_run_all_threads(vm_state, program)
+                
+            self.assertTrue( vm_is_finished(vm_state) == True )
+            self.assertTrue( vm_state['threads'][0]['r0']      == 0 )   
+
+
+        #
+        # SequencePattern
+        #            
+        def test_SequencePattern2(self): 
+            
+            input_sequence = [
+                ('b', 'a'),
+                ('a', ''),
+                ('c', ''),
+            ]
+            
+            p = SequencePattern('S', [
+                InputPattern('A', 'a'),
+                InputPattern('B', 'b'),
+                InputPattern('C', 'c'),
+            ])
+            
+            program = p.compile()
+
+            DEBUG_PRINT_PROGRAM(program)
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            for c, expected_input in input_sequence:
+
+                expected_input_from_machine = get_machine_expected_inputs(vm_state, program )
+                
+                expected_input_from_machine = ''.join(sorted(expected_input_from_machine))
+                
+                self.assertTrue( expected_input_from_machine == expected_input)
+                
+                vm_set_input(vm_state, c)
+                vm_run_all_threads(vm_state, program)
+                
+            self.assertTrue( vm_is_finished(vm_state) == True  )
+            self.assertTrue( vm_state['threads'][0]['r0'] == -1 )   
+
+            
+
+        #
+        # InputWithTimer
+        #            
+        def test_AlternativePattern3(self): 
+            
+            input_sequence = [
+                ('z', 'abc'),
+            ]
+            
+            p = AlternativePattern('Alternative', [
+                InputWithTimer('A', 5, 'a'),
+                InputWithTimer('B', 6, 'b'),
+                InputPattern  ('C', 'c'),
+            ])
+            
+            program = p.compile()
+            
+            DEBUG_FORMAT_PROGRAM(program)
+            
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            t = 0
+            
+            while t < 10:
+
+                DEBUG(str(t) + "-" * 80)
+
+                vm_set_clock(vm_state, t)
+
+                if t >= 4:      
+                    vm_set_input(vm_state, 'b')
+
+                vm_run_all_threads(vm_state, program)
+                
+                t+=1
+                
+            self.assertTrue( vm_is_finished(vm_state) == True   )
+            #self.assertTrue( vm_state['threads'][0]['r0'] == -1 )   
+            #self.assertTrue( vm_state['threads'][1]['r0'] == -1 )   
+            #self.assertTrue( vm_state['threads'][2]['r0'] == -1 )   
+        
+        #
+        # OptionalPattern
+        #            
+        def test_OptionalPattern1(self): 
+            
+            input_sequence = [
+                ('b', 'a'),
+            ]
+            
+            p = OptionalPattern('Optional', 
+                InputPattern('A', 'a'),
+            )
+            
+            program = p.compile()
+
+            DEBUG_PRINT_PROGRAM(program)
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            for c, expected_input in input_sequence:
+
+                expected_input_from_machine = get_machine_expected_inputs(vm_state, program )
+                
+                expected_input_from_machine = ''.join(sorted(expected_input_from_machine))
+                
+                self.assertTrue( expected_input_from_machine == expected_input)
+                
+                vm_set_input(vm_state, c)
+                vm_run_all_threads(vm_state, program)
+                
+            self.assertTrue( vm_is_finished(vm_state) == True   )
+            self.assertTrue( vm_state['threads'][0]['r0'] == -1 )   
+            self.assertTrue( vm_state['threads'][1]['r0'] == 0  )   
+
+        #
+        # OptionalPattern
+        #            
+        def test_OptionalPattern2(self): 
+            
+            input_sequence = [
+                ('b', 'a'),
+            ]
+            
+            p = OptionalPattern('Optional', 
+                InputPattern('A', 'a'),
+            )
+            
+            program = p.compile()
+
+            DEBUG_PRINT_PROGRAM(program)
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            t = 0
+            
+            while t < 10:
+
+                DEBUG(str(t) + "-" * 80)
+
+                vm_set_clock(vm_state, t)
+
+                if t >= 4:      
+                    vm_set_input(vm_state, 'c')
+
+                vm_run_all_threads(vm_state, program)
+                
+                t+=1
+                
+            self.assertTrue( vm_is_finished(vm_state) == True   )
+            self.assertTrue( vm_state['threads'][0]['r0'] == -1 )   
+            self.assertTrue( vm_state['threads'][1]['r0'] == 0  )  
+
+        #
+        # RepetitionPattern
+        #            
+        def test_RepetitionPattern1(self): 
+            
+            input_sequence = [
+                ('a', 'a'),
+            ]
+            
+            p = RepetitionPattern('Repetition', 
+                InputPattern('A', 'a'),
+            )
+            
+            program = p.compile()
+
+            DEBUG_PRINT_PROGRAM(program)
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            for c, expected_input in input_sequence:
+
+                expected_input_from_machine = get_machine_expected_inputs(vm_state, program )
+                
+                expected_input_from_machine = ''.join(sorted(expected_input_from_machine))
+                
+                self.assertTrue( expected_input_from_machine == expected_input)
+                
+                vm_set_input(vm_state, c)
+                vm_run_all_threads(vm_state, program)
+                
+            self.assertTrue( vm_is_finished(vm_state) == False   )
+            self.assertTrue( vm_state['threads'][0]['state'] == THREAD_TERMINATED )   
+            self.assertTrue( vm_state['threads'][1]['state'] == THREAD_WAIT_IO  )   
+
+        #
+        # RepetitionPattern
+        #            
+        def test_RepetitionPattern2(self): 
+            
+            input_sequence = [
+                ('a', 'a'),
+            ]
+            
+            p = RepetitionPattern('Repetition', 
+                InputWithTimer('A', 4, 'a'),
+            )
+            
+            program = p.compile()
+
+            DEBUG_PRINT_PROGRAM(program)
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            t = 0
+            
+            while t < 20:
+
+                DEBUG(str(t) + "-" * 80)
+
+                vm_set_clock(vm_state, t)
+
+                if t == 2:      
+                    vm_set_input(vm_state, 'a')
+
+                vm_run_all_threads(vm_state, program)
+                
+                if vm_is_finished(vm_state):
+                    break
+                
+                t+=1
+                
+            self.assertTrue( vm_is_finished(vm_state) == True   )
+
+            self.assertTrue ( vm_state['threads'][0]['state'] == THREAD_TERMINATED )   
+            self.assertTrue ( vm_state['threads'][0]['r0'   ] == 0 )   
+            self.assertTrue ( vm_state['threads'][1]['state'] == THREAD_TERMINATED  )   
+            self.assertFalse( vm_state['threads'][1]['r0'   ] == 0 )   
+
+
+        #
+        # StarRepetitionPattern
+        #            
+        def test_StarRepetitionPattern1(self): 
+            
+            input_sequence = [
+                ('c', 'a'),
+            ]
+            
+            p = StarRepetitionPattern('Star', 
+                InputPattern('A', 'a'),
+            )
+            
+            program = p.compile()
+
+            DEBUG_PRINT_PROGRAM(program)
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            for c, expected_input in input_sequence:
+
+                expected_input_from_machine = get_machine_expected_inputs(vm_state, program )
+                
+                expected_input_from_machine = ''.join(sorted(expected_input_from_machine))
+                
+                self.assertTrue( expected_input_from_machine == expected_input)
+                
+                vm_set_input(vm_state, c)
+                vm_run_all_threads(vm_state, program)
+                
+            self.assertTrue( vm_is_finished(vm_state) == True   )
+            self.assertTrue( vm_state['threads'][0]['state'] == THREAD_TERMINATED )   
+            self.assertTrue( vm_state['threads'][1]['state'] == THREAD_TERMINATED )   
+
+        def test_StarRepetitionPattern2(self): 
+            
+            input_sequence = [
+                ('a', 'a'),
+            ]
+            
+            p = StarRepetitionPattern('Star', 
+                InputPattern('A', 'a'),
+            )
+            
+            program = p.compile()
+
+            DEBUG_PRINT_PROGRAM(program)
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            for c, expected_input in input_sequence:
+
+                expected_input_from_machine = get_machine_expected_inputs(vm_state, program )
+                
+                expected_input_from_machine = ''.join(sorted(expected_input_from_machine))
+                
+                self.assertTrue( expected_input_from_machine == expected_input)
+                
+                vm_set_input(vm_state, c)
+                vm_run_all_threads(vm_state, program)
+                
+            self.assertTrue( vm_is_finished(vm_state) == False   )
+            self.assertTrue( vm_state['threads'][0]['state'] == THREAD_TERMINATED )   
+            self.assertTrue( vm_state['threads'][1]['state'] == THREAD_TERMINATED )   
+            self.assertTrue( vm_state['threads'][2]['state'] == THREAD_WAIT_IO )   
+
+
+        def test_MinMaxRepetitionPattern(self): 
+
+            input_sequence = [
+                ('a', 'a'),
+                ('a', 'a'),
+                ('a', 'a'),
+                ('a', 'a'),
+                ('a', 'a'),
+            ]
+            
+            p = MinMaxRepetitionPattern('Star', 
+                2,  #min
+                4,  #max
+                InputPattern('A', 'a'),
+            )
+
+            program = p.compile()
+
+            DEBUG_PRINT_PROGRAM(program)
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            for c, expected_input in input_sequence:
+
+                #expected_input_from_machine = get_machine_expected_inputs(vm_state, program )
+                #expected_input_from_machine = ''.join(sorted(expected_input_from_machine))
+                #self.assertTrue( expected_input_from_machine == expected_input)
+                
+                vm_set_input(vm_state, c)
+                vm_run_all_threads(vm_state, program)
+                
+            #self.assertTrue( vm_is_finished(vm_state) == True   )
+            for t in vm_state['threads']:
+                DEBUG("Thread: %s -> status=%s ret=%s" % (t['id'], t['state'], t['r0']))
+
+
+        def test_timestamp_test(self): 
+
+            ts = 0
+
+            input_sequence = [
+                (ts+1, 'a'),
+                (ts+2, 'a'),
+                (ts+3, 'a'),
+                (ts+4, 'a'),
+                (ts+5, 'a'),
+            ]
+            
+            p = MinMaxRepetitionPattern('Star', 
+                2,  #min
+                4,  #max
+                InputPattern('A', 'a'),
+            )
+
+            program = p.compile()
+
+            DEBUG_PRINT_PROGRAM(program)
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            for ts, input_data in input_sequence:
+                DEBUG("*" * 80)
+                DEBUG("%s" % (ts))
+                DEBUG("*" * 80)
+                vm_set_clock(vm_state, ts)
+                vm_set_input(vm_state, input_data)
+
+                vm_run_all_threads(vm_state, program)
+                
+                for t in vm_state['threads']:
+                    DEBUG("\t", "Thread: %s -> status=%s ret=%s" % (t['id'], t['state'], t['r0']))
+
+        #
+        # InputWithTimer
+        #            
+        def test_InputWithTimer(self): 
+            
+            
+            input_sequence = [
+                 # input , expected_input
+                ('a', 'a'),
+            ]
+            
+            p  = InputWithTimer('A', 5, 'a')
+            program = p.compile()
+            
+            DEBUG_PRINT_PROGRAM(program)
+
+            vm_state = VM_STATE()
+            vm_init(vm_state, program)    
+            
+            ts = 0
+            
+            #for c, expected_input in input_sequence:
+            while ts < 10:
+                DEBUG("*" * 80)
+                DEBUG("%s" % (ts))
+                DEBUG("*" * 80)
+                
+                #expected_input_from_machine = get_machine_expected_inputs(vm_state, program )
+                
+                #expected_input_from_machine = ''.join(sorted(expected_input_from_machine))
+                #self.assertTrue( expected_input_from_machine == expected_input)
+
+                if ts < 3:
+                    vm_set_input(vm_state, str(ts))
+                if ts == 4:
+                    vm_set_input(vm_state, 'a')
+
+                vm_set_clock(vm_state, ts)
+                vm_run_all_threads(vm_state, program)
+                
+                
+                ts += 1
+                
+            self.assertTrue( vm_is_finished(vm_state) == True )
+            self.assertTrue( vm_state['threads'][0]['r0'] == 0 )
+
+
+
+    unittest.main()
+
+
+    sys.exit(-1)

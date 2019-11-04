@@ -23,9 +23,10 @@ class DictInputMatcher(object):
 if __name__ == "__main__":
     
     from pmvm.vm import VM_STATE
-    from pmvm.vm import run_machine    
+    from pmvm.vm import vm_run    
     
     from pmvm.patterns import *
+    from pmvm.utils import DictInputMatcher
 
     def PRINT(p):
         for n, r in enumerate(p):
@@ -33,10 +34,18 @@ if __name__ == "__main__":
 
     import pprint
 
-    pa = SinglePattern('A', DictInput({'key': 'a'}) )
-    pb = SinglePattern('B', DictInput({'key': 'b'}) )
-    p = MinMaxRepetitionPattern("minmax", pa, 2, 4)
-    p = SequencePattern('S', [ p, pb ])
+
+    #
+    # A{2,4}+ B  <EOF>
+    #
+    p = SequencePattern('S', [ 
+        MinMaxRepetitionPattern("minmax", 2, 4, 
+            SinglePattern('A', DictInputMatcher({'key': 'a'}) )
+        ), 
+        SinglePattern('B', DictInputMatcher({'key': 'b'}) ) 
+    ])
+    
+    print(p)
 
     program = p.compile()
 
@@ -48,21 +57,40 @@ if __name__ == "__main__":
     print("*" * 80)
     print("EXECUTION")
     print("*" * 80)
+    
+    input_pattern = [
+        {'key': 'a'},
+        {'key': 'a'},
+        {'key': 'a'},
+        #{'key': 'a'},
+        #{'key': 'a'},
+        #{'key': 'a', 'key2': 666},
+        {'key': 'c'},
+    ]
+    
+    
 
     state = VM_STATE()
-    run_machine(state, program, {'key': 'a'} )
-    run_machine(state, program, {'key': 'a'} )
-    #run_machine(state, program, {'key': 'a', 'key2': 666} )
-    run_machine(state, program, {'key': 'a'} )
-    #run_machine(state, program, {'key': 'a'} )
-    #run_machine(state, program, {'key': 'a'} )
-    run_machine(state, program, {'key': 'b'} )
-    #run_machine(state, program, 'a')
-    #run_machine(state, program, 'c')
-    #run_machine(state, program, 'a')
-    #run_machine(state, program, 'a')
-    #run_machine(state, program, 'a')
-    #run_machine(state, program, 'c')
+    vm_init(state, program)
+    
+    for i in input_pattern:
+        vm_run(state, program, i )
+        print("-------------------------" + str(state['matched']))
+    
+    #vm_run(state, program, {'key': 'a'} )
+    ##run_machine(state, program, {'key': 'a', 'key2': 666} )
+    #vm_run(state, program, {'key': 'a', 'key2': 666} )
+    ##vm_run(state, program, {'key': 'a'} )
+    ##vm_run(state, program, {'key': 'a'} )
+    ##run_machine(state, program, {'key': 'a'} )
+    ##run_machine(state, program, {'key': 'a'} )
+    #vm_run(state, program, {'key': 'b'} )
+    ##run_machine(state, program, 'a')
+    ##run_machine(state, program, 'c')
+    ##run_machine(state, program, 'a')
+    ##run_machine(state, program, 'a')
+    ##run_machine(state, program, 'a')
+    ##run_machine(state, program, 'c')
 
 
     print("*" * 80)
