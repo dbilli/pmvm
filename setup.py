@@ -39,7 +39,7 @@ print "Reading version from file"
 VERSION = get_version_from_file()
 if not VERSION:
     print "Reading version from sourcecode"
-    VERSION = extract_symbol('pmvm/__init__.py', 'version')
+    VERSION = extract_symbol('svmlib/__init__.py', 'version')
 
 if not VERSION:
     raise Exception("Unable to get version")
@@ -60,9 +60,9 @@ REQUIREMENTS = [
 #------------------------------------------------------------------------------#
 
 setup(
-    name             = 'pmvm',
+    name             = 'svmlib',
     version          = '0.1',
-    description      = 'Pattern Matching Virtual Machine',
+    description      = 'Simple Virtual Machine Library',
 
     packages         = PACKAGES,
     
@@ -71,7 +71,7 @@ setup(
     # Metadata
     author           = 'Diego Billi',
     author_email     = 'diegobilli@gmail.com',
-    url              = 'https://github.com/dbilli/pmvm',
+    url              = 'https://github.com/dbilli/svmlib',
     
     license          = "GPLv2",
 )
