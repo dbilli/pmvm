@@ -47,9 +47,7 @@ class StopException(VMException):
 def vm_create(initial_context=None, clock=None):
 
     vm_state = {
-        #'threads': [],                   # Current threads of execution
         'threads' : {},
-        
         'threadid': 0,                   # Last assigned thread id
     }
     
@@ -64,8 +62,8 @@ def vm_create(initial_context=None, clock=None):
 _tid = 0
 
 THREAD_TERMINATED = "TERM"
-THREAD_RUNNING    = "RUN "
-THREAD_WAIT_IO    = "I/O "
+THREAD_RUNNING    = "RUN"
+THREAD_WAIT_IO    = "I/O"
 
 def vm_thread_create(pc=0, clock=0, context=None):
 
@@ -81,22 +79,22 @@ def vm_thread_create(pc=0, clock=0, context=None):
         
         'respawn'        : True,             # Start new thread when this ends
 
+        'context'        : context,          # Global vars 
+
+        #
+        # Execution state
+        #        
         'state'          : THREAD_RUNNING,   # Thread state
-        
+        'clock'          : clock,            # Current execution clock
         'pc'             : pc,               # Program counter
         'regstack'       : [],               # Registers
 
-        'clock'          : clock,            # Current execution clock
-
-        'input'          : None,             # Input to consume 
-        #'input_timer'    : None,             # 
-        
+        #
+        # I/O
+        #
         'output'         : [],               # Output data
-        
-        #'sp'             : 0,                # Stack Pointer
-        #'stack'          : [],
-        
-        'context'        : context           # Global vars 
+        'input'          : [],               # Input to consume 
+        #'input_timer'    : None,            # 
     }
     _tid += 1
 
@@ -107,11 +105,6 @@ def vm_thread_create(pc=0, clock=0, context=None):
 #----------------------------------------------------------------------#
 
 def _vm_init( vm_run_state, initial_context=None, clock=None ):
-
-    #if initial_context:
-    #    initial_context = copy.copy(initial_context)
-    #else:
-    #    initial_context = {}
 
     # Create the first main thread
     main_thread = vm_thread_create(clock=clock, context=initial_context)
@@ -130,9 +123,7 @@ def vm_add_thread(vm_run_state, thread):
     vm_run_state['threads'][tid] = thread
 
 def vm_get_thread(vm_run_state, tid):
-    #for t in vm_run_state['threads']:
-    #    if t['id'] == tid:
-    #        return t
+
     try:
         return vm_run_state['threads'][tid]
     except KeyError as e:
@@ -148,6 +139,8 @@ def vm_is_finished( vm_run_state ):
     for t in vm_run_state['threads'].values():
         if t['state'] == THREAD_TERMINATED:
             count +=1
+    
+    #print(__file__, count, n)
     
     if count == n:
         return True
@@ -166,10 +159,7 @@ def vm_is_waiting_input( vm_run_state ):
         elif thread['state'] == THREAD_TERMINATED:
             t += 1
 
-    return (n - t) == w
-
-
-
+    return w > 0 and (n - t) == w
 
 #----------------------------------------------------------------------#
 # CLOCK                                                                #
@@ -203,12 +193,27 @@ def vm_get_threads_output( vm_run_state):
     return outputs
 
 
+def vm_set_input(vm_run_state, input_data, thread_id=None):
+
+    if thread_id is not None:
+
+        t = vm_run_state['threads'][thread_id]
+        vm_thread_set_input(t, input_data)
+        
+    else:
+
+        for tid, t in vm_run_state['threads'].items():
+            vm_thread_set_input(t, input_data)
+
+            
 def vm_thread_set_input( thread, input_data):
 
     if thread['state'] == THREAD_TERMINATED:
         raise Exception("Thread %s not valid for input" % (thread['id']))
         
-    thread['input'] = [ input_data ]
+    thread['input'].append( input_data )
+    
+    thread['state'] = THREAD_RUNNING
 
 
 #def vm_set_input( vm_run_state, thread_id, input_data):
@@ -289,7 +294,7 @@ def vm_thread_exit( thread, code ):
     thread['regstack'] = [code]
 
 
-def vm_run_thread(vm_run_state, program, thread):
+def vm_run_thread(vm_run_state, program, thread, run_loop_count=None):
 
     DEBUG("\tTHREAD: id=%(id)s  state=%(state)s  pc=%(pc)s  regstack=%(regstack)s  input=%(input)s" % thread)
 
@@ -302,9 +307,10 @@ def vm_run_thread(vm_run_state, program, thread):
     
     while thread_state: 
         
-            if run_loop_count > 10:
-                break
-            run_loop_count += 1
+            if run_loop_count is not None:
+                if run_loop_count > 2:
+                    break
+                run_loop_count += 1
 
 
             DEBUG_SLEEP()
@@ -433,7 +439,7 @@ def vm_run_thread(vm_run_state, program, thread):
 
                 v = thread_regstack.pop()
                 
-                thread_regstack.append( not(v) )
+                thread_regstack.append( not (v) )
 
             elif opcode == OP_CODE_REGPOW:
 
@@ -561,11 +567,9 @@ def vm_run_thread(vm_run_state, program, thread):
 
             elif opcode == OP_CODE_GETATTRLV:
 
-                left_value = params
-
                 v2 = thread_regstack.pop()
                 v1 = thread_regstack.pop()
-
+                
                 context1, sym1 = v1
                 sym2 = v2
                 
@@ -640,46 +644,101 @@ def vm_run_thread(vm_run_state, program, thread):
                     #vm_run_state['threads'].append( thread2 )
                     vm_add_thread( vm_run_state, thread2 )
 
-
+            #
+            # CALL
+            #
             elif opcode == OP_CODE_CALL:
 
-                fun    = thread_regstack.pop()
-                params = thread_regstack.pop()
+                n_args, n_kwargs = params
+                
+                fun_callable    = thread_regstack.pop()
+                
+                stacked_params = thread_regstack[-(n_args + n_kwargs): ]
+                
+                del thread_regstack[-(n_args + n_kwargs): ]
+                
+                args   =      stacked_params[          : n_args ]  if n_args   else list()
+                kwargs = dict(stacked_params[ -n_kwargs:        ]) if n_kwargs else dict()
                 
                 try:
-                    DEBUG( "CALLING %s args=%s" % (fun, repr(params)))
-                    ret = fun(thread, *list(params))
+                    DEBUG( "CALLING %s args=%s:%r  kargs=%s:%r" % (fun_callable, n_args, args, n_kwargs, kwargs))
+                    
+                    ret = fun_callable(thread, *args, **kwargs)
                     
                     thread_regstack.append(ret)
-                
-                except WaitForInputException as we:
-
-                    DEBUG( "WATING IO")
-
-                    thread_regstack.append(params)
-                    thread_regstack.append(fun)
-
-                    pc -= 1
-
-                    thread_state = THREAD_WAIT_IO
-                    break
                     
                 except StopException as se:
                     break
 
-            elif opcode == OP_CODE_FASTCALL:
+            #
+            # CALL_SYM
+            #
+            elif opcode == OP_CODE_CALL_SYM:
 
-                DEBUG( "FASTCALL", thread_regstack)
+                n_args, n_kwargs = params
+                
+                fun_sym    = thread_regstack.pop()
+                
+                stacked_params = thread_regstack[-(n_args + n_kwargs): ]
+                
+                del thread_regstack[-(n_args + n_kwargs): ]
+                
+                fun_callable = thread_context[ fun_sym ]
+                args   =      stacked_params[          : n_args ]  if n_args   else list()
+                kwargs = dict(stacked_params[ -n_kwargs:        ]) if n_kwargs else dict()
+                
+                try:
+                    DEBUG( "CALLING %s args=%s:%r  kargs=%s:%r" % (fun_callable, n_args, args, n_kwargs, kwargs))
+                    
+                    ret = fun_callable(thread, *args, **kwargs)
+                    
+                    thread_regstack.append(ret)
+                    
+                except StopException as se:
+                    break
+
+            elif opcode == OP_CODE_CALL_NATIVE:
+
+                fun_callable, n_args, n_kwargs = params
+                
+                stacked_params = thread_regstack[-(n_args + n_kwargs): ]
+                
+                del thread_regstack[-(n_args + n_kwargs): ]
+                
+                args   =      stacked_params[          : n_args ]  if n_args   else list()
+                kwargs = dict(stacked_params[ -n_kwargs:        ]) if n_kwargs else dict()
+                
+                try:
+                    DEBUG( "CALLING %s args=%s:%r  kargs=%s:%r" % (fun_callable, n_args, args, n_kwargs, kwargs))
+                    
+                    ret = fun_callable(thread, *args, **kwargs)
+                    
+                    thread_regstack.append(ret)
+                    
+                except StopException as se:
+                    break
 
 
-                fun_symbol = params
+
+
+
+
+
+
+            elif opcode == OP_CODE_FUNCALL:
+
+                DEBUG( "FUNCALL", thread_regstack)
+
+
+                fun_obj = params
                 
                 fun_params = thread_regstack.pop()
-
-                fun = thread_context[ fun_symbol ]
+                
+                DEBUG( "    FUN   ", fun_obj)
+                DEBUG( "    PARAMS", fun_params)
                 
                 try:
-                    ret = fun(thread, *list(fun_params))
+                    ret = fun_obj(thread, *list(fun_params))
                     
                     thread_regstack.append(ret)
                 
@@ -688,7 +747,7 @@ def vm_run_thread(vm_run_state, program, thread):
                     DEBUG( "WATING IO")
 
                     thread_regstack.append(params)
-                    thread_regstack.append(fun)
+                    thread_regstack.append(fun_obj)
 
                     pc -= 1
 
@@ -699,15 +758,13 @@ def vm_run_thread(vm_run_state, program, thread):
                     break
 
 
-
-
-
-
+            #
+            # I/O
+            #
             elif opcode == OP_CODE_OUTPUT:
 
                 data = thread_regstack.pop()
                 thread['output'].append(data)
-
 
             elif opcode == OP_CODE_INPUT:
 

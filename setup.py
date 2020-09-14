@@ -1,4 +1,5 @@
 
+import sys
 import os
 import re
 
@@ -8,49 +9,22 @@ from setuptools import setup, find_packages
 #                                                                              #
 #------------------------------------------------------------------------------#
 
-def extract_symbol(version_file, symbol):
+sys.path.insert(0, '.')
 
-    # __version__ = "...."
-    # __version__ = '....'
-    VSRE = r"^__%s__\s*=\s*['\"]([^'\"]*)['\"]" % (symbol)
+import svmlib      
 
-    verstrline = open(version_file, "rt").read()
-
-    mo = re.search(VSRE, verstrline, re.M)
-    if not mo:
-        raise RuntimeError("Unable to find %s string in %s." % (symbol, version_file,))
-
-    return mo.group(1)
-
-def get_version_from_file():
-    try:
-        f = open('VERSION')
-        data = f.read()
-        f.close()
-        return data.strip()
-    except Exception, e:
-        return None
+VERSION = svmlib.__version__
         
 #------------------------------------------------------------------------------#
 #                                                                              #
 #------------------------------------------------------------------------------#
 
-print "Reading version from file"
-VERSION = get_version_from_file()
-if not VERSION:
-    print "Reading version from sourcecode"
-    VERSION = extract_symbol('svmlib/__init__.py', 'version')
-
-if not VERSION:
-    raise Exception("Unable to get version")
-
-print "Package version: ", VERSION
-print "Found following packages:"
+print("Package version: ", VERSION)
+print("Found following packages:")
 PACKAGES = find_packages()
 
 for name in PACKAGES:
-    print "\t", name
-
+    print("\t", name)
 
 REQUIREMENTS = [
 ]
@@ -61,7 +35,7 @@ REQUIREMENTS = [
 
 setup(
     name             = 'svmlib',
-    version          = '0.1',
+    version          = VERSION,
     description      = 'Simple Virtual Machine Library',
 
     packages         = PACKAGES,

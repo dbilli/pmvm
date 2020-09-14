@@ -1,24 +1,181 @@
 # svmlib: Simple Virtual Machine Library
 
-## 1. Introduction
+## Introduction
 
 The idea behind **svmlib** is to implement a *lightweight virtual machine* with the following features:
 
-* Simple API 
-* *JSON-izable* VM state
 * Support for basic data types (integer,float, strings), arrays and dictionaries
 * Lightweight threads
 * Input/ouput primitives
+* Simple API 
+* *JSON-izable* VM state and bytecode
 * External code execution (function call)
 
-### 1.1. Examples
+
+
+## The VM architecture
+
+### "Bytecode" and "opcodes"
+
+A *program* is a **array** of *instructions* .
+
+One *instruction* (or *opcode*) is a tuple of two elements:
+
+    ( opcode , params )
+
+* opcode: **number** (or **string** when debug mode is enabled)
+* params: a **single** value OR an **array** of parameters.
+
+Example:
+
+    (1, )                     # PASS  
+    
+    (2, 0)                    # STOP(0) - One parameter
+      
+    (600, [30,55,72])         # FORK 4 threads 
+
+A *programs* is a sequence of instruction, from address (position) 0 to address N.
+
+    [
+     <opcode 1>,     # 0
+     <opcode 2>,     # 1
+     <opcode 3>,     # 2
+    ] 
+
 
 #### Example 1
 
+A simple exit(0) program:
+
+    exit(0)
+
+A possible *compiled version*:
+
+    [
+     (2, 0),        # 0: exit 0
+    ]
+
+
+#### Example 2:
+
+A loop program:
+
+    do
+        pass
+    while 1
+
+A possible *compiled version*:
+
+    [
+     (1, ),         # 0: pass
+     (2, 0),        # 1: JUMP 0
+    ]
+
+
+
+
+### The CPU 
+
+The VM is a "stack based" virtual machine. 
+
+All VM's instructions (opcodes): 
+
+* pop values from the stack
+* perform some logic
+* push return value on the stack.
+
+Example: This code:
+
+    1 + 2
+
+is implemented with this bytecode:
+
+    [
+     (101, 1),       # SET 1     push value 1 on the stack
+     (101, 2),       # SET 2     push value 2 on the stack
+     (400,  ),       # REGSUM    pop 2 values from the stack, sum them and push result on the stack
+    ]
+
+
+### Threads
+
+#### Light-weight
+
+The VM support *light-weight* threads and **do not use** OS's native threading APIs.
+
+A thread can *fork* and create an unlimited number of *threads*.
+
+* ID
+* running state (RUNNING/TERMINATED/WAITING FOR IO)
+* Registry stack
+* Program Counter (PC)
+* INPUT buffer
+* OUTPUT buffer
+* CLOCK 
+* Execution context (dictionary)
+
+The *program* is started inside the *main thread*. 
+
+Threads do not share any data.
+
+#### Time/Clock
+
+The VM has an internal clock. 
+
+The *clock* is a simple integer value and rappresent the number of seconds since the epoch.
+
+The *clock* is indipendent from the system time and must be set properly when running the VM.
+
+#### Input handling
+
+Every thread has 2 I/O channels:
+
+* Input channel
+* Output channel
+
+A program can read data from *input* channel and write data to *output* channel.
+
+#### Execution context and global symbols
+
+An *execution context* is the *memory* of the virtual machine. It is a dictionary of *symbols* the program code can read and write.
+
+#### External function calling
+
+The *program* can *call* external funtions defined in the *execution context*.
+
+The *external* function accepts at least one parameter: the VM thread object calling the function. The other parameters are the *real* function parameters.
+
+    from svmlib import *
+    
+    def fun_power(thread_obj, n, e):
+        print("CALLING POWER FROM THREAD %s" % (thread_obj['id']))
+        return n ** e
+    
+    execution_context = {
+        'pow: fun_power
+    }
+    
+    program = [
+        SET(2),       # Push 'n' on the stack
+        SET(3),       # Push 'e' on the stack
+
+        SET('pow'),   # Push 'pow' on the stack
+        LOADSYM(),    # Load symbol 'pow' from context
+
+        CALL(2,0),    # Call callable object (fun_power) with 2 positional arguments (and 0 named arguments)
+    ]
+    
+    vm = vm_create(execution_context)
+    vm_run_all_threads(vm, program)
+
+### Examples
+
+#### Simple 
+
 Pseudo-code:
 
-    print(1+2)
-    exit(0)
+    1+2
+    exit 0
 
 Using *svmlib*:
 
@@ -27,19 +184,51 @@ Using *svmlib*:
     program = [
         SET(1),        # push value 1
         SET(2),        # push value 2
-        REGSUM(),      # push 1+2
-        SET("print"),  # 
-        LOADSYM(),
-        CALL(),
+
+        REGSUM(),      # load 2 values, calculate sum and push result
+        
         STOP(0),       # exit(0)
     ]
     
     vm = vm_create()
     vm_run_all_threads(vm, program)
     
+#### Function call
+
+Pseudo-code:
+
+    prints("hello world")
+    exit(0)
+
+Using *svmlib*:
+
+    from svmlib import *
+    
+    def fun_prints(vm_thread, s):
+        vm_thread['output'].append(s)
+    
+    context = {
+       'prints': fun_prints
+    }
+    
+    program = [
+        SET("Hello world"),  # push parameter on the stack
+
+        SET("prints"),       #
+        LOADSYM(),           # Load function caller 
+        
+        CALL(1),             # Call with 1 positional parameter
+        
+        STOP(0),             # exit(0)
+    ]
+    
+    vm = vm_create(context)
+    vm_run_all_threads(vm, program)
+    
     print(vm['threads'][0]['output'])
 
-#### Example 2
+
+#### Threading
 
 Pseudo-code:
 
@@ -86,224 +275,24 @@ Using *svmlib*:
     vm_run_all_threads(vm, program)
 
 
-#### Example 3
 
 
-Call a *user-defined* function *fun1*:
 
-    fun1('param1', 'param1', 'param1')
 
-Using *svmlib*:
 
-    from svmlib import *
-    
-    program = [
-        SET('param1'),
-        SET('param2'),
-        SET('param3'),
-        CREATETUPLE(3),      # args = ('param1,'param2','param3')
-        
-        SET('fun1'),         # load external function "fun1"
-        LOADSYM(),
-        
-        CALL()               # fun1(*args)
-    ]
-    
-    def fun1(vm_thread, a1, a2, a3):
-        print("a1=%s a2=%s a3=%s" % (a1,a2,a3))
-    
-    exec_context = {
-        'fun1': fun1,
-    }
-    
-    vm = vm_create(exec_context)
-    vm_run_all_threads(vm, program)
 
 
-### 1.1. VM State is JSONable
 
-The VM **run state** is described with  **JSON-able** data structures (tuples, lists, dictionaries). 
 
-This permits to:
 
-* Implement the VM in other languages very easily.
-* Store/load the *VM* from an *in-memory database store* (memcache, redis, mongodb) and use them in a distribuited system.
+## Python API
 
+### Creating programs (bytecode)
 
-### 1.2. Light-weight threads
-
-The virtual machine supports **lightweight threads** used to implement *forks* of the the current execution thread. 
-
-This permits to implement easily complex non-deterministic algorithms for patter matching logic:
-
-* P1 | P2 | P3 : alternative
-* P+, P* : repetition
-* P? : optional pattern
-
-### 1.3. Data Types
-
-The VM supports the types used by almost every modern programming language:
-
-* Nil/None/Null
-* Numbers (integers, floats)
-* Arrays (vectors)
-* Dictionaries (tables/maps)
-
-### 1.4. Input/Output
-
-The VM implements a very basic I/O.
-
-
-
-
-
-
-
-
-## 2. The VM architecture
-
-### 2.1. The *compiled* program and Opcodes
-
-The VM runs a *program*.
-
-A *program* is a **array** of *instructions*.
-
-One *instruction* (or *opcode*) is a tuple of two elements:
-
-    ( opcode , params )
-
-* opcode: **number**
-* params: a **single** value OR an **array** of parameters.
-
-#### Example 1
-
-A simple exit(0) program:
-
-    exit(0)
-
-A possible *compiled version*:
-
-    [
-     (2, 0),        # 0: exit 0
-    ]
-
-
-#### Example 2:
-
-A loop program:
-
-    do
-        pass
-    while 1
-
-A possible *compiled version*:
-
-    [
-     (1, ),         # 0: pass
-     (2, 0),        # 1: JUMP 0
-    ]
-
-Example:
-
-    (1, )                     # PASS  
-    
-    (2, 0)                    # STOP(0)
-    
-    (600, [30,55,72])         # FORK 4 threads
-
-
-### 2.2. The CPU registers
-
-The VM is a "stack based" virtual machine. VM instructions (opcodes): 
-
-* pop values from the stack
-* perform some logic
-* push return value on the stack.
-
-Example:
-
-    
-    [
-     (101, 1),       # SET 1     push value 1 on the stack
-     (101, 2),       # SET 2     push value 2 on the stack
-     (400,  ),       # REGSUM    pop 2 values from the stack, sum them and push result on the stack
-    ]
-
-### 2.3. Threads
-
-#### 2.3.1. Light-weight
-
-The VM support *light-weight* threads and **do not use** OS's native threading APIs.
-
-A thread can *fork* and create an unlimited number of *threads*.
-
-* ID
-* running state (RUNNING/TERMINATED/WAITING FOR IO)
-* Registry stack
-* Program Counter (PC)
-* INPUT buffer
-* OUTPUT buffer
-* CLOCK 
-* Execution context (dictionary)
-
-The *program* is started inside the *main thread*. 
-
-Threads do not share any data.
-
-#### 2.3.2. Time/Clock
-
-The VM has an internal clock. 
-
-The *clock* is a simple integer value and rappresent the number of seconds since the epoch.
-
-The *clock* is indipendent from the system time and must be set properly when running the VM.
-
-#### 2.3.4. Input handling
-
-Every thread has 2 I/O channels:
-
-* Input channel
-* Output channel
-
-A program can read data from *input* channel and write data to *output* channel.
-
-#### 2.3.2. Execution context and global symbols
-
-An *execution context* is the *memory* of the virtual machine. It is a dictionary of *symbols* the program code can read and write.
-
-#### 2.3.3. External function calling
-
-The *program* can *call* external funtions defined in the *execution context*.
-
-The *external* function accepts at least one parameter: the VM thread object calling the function. The other parameters are the *real* function parameters.
-
-    from svmlib import *
-    
-    def power(thread_obj, n, e):
-        print("CALLING POWER FROM THREAD %s" % (thread_obj['id']))
-        return n ** e
-    
-    execution_context = {
-        'pow: power
-    }
-    
-    program = [
-        ...
-        ...
-    ]
-    
-    vm = vm_create(execution_context)
-    vm_run_all_threads(vm, program)
-
-
-## 3. Python API
-
-### 3.1 Creating programs (bytecode)
-
-A program is a list of tuples opcodes. 
+Create a list of "opcodes":
 
     program = [
-        (2, 0),        # exit 0
+        (2, -1),        # exit(-1)
     ]
 
 Instead of use *tuples* you can use functions provided by **svmlib.opcodes** module. 
@@ -311,10 +300,10 @@ Instead of use *tuples* you can use functions provided by **svmlib.opcodes** mod
     from svmlib.opcodes import *
 
     program = [
-        STOP(0)
+        STOP(-1)
     ]
 
-### 3.2 Create a VM State object
+### Create a VM State object
 
 Use the **vm_create** function to create a *virtual machine* object:
 
@@ -334,7 +323,7 @@ A *initial context* and initial *clock* can be specified:
     
     vm = vm_create(initial_context=context, clock=time.time())
 
-### 3.3 Set current clock
+### Set current clock
 
 Use **vm_set_clock** to set/change the current clock for all threads:
 
@@ -346,7 +335,7 @@ Use **vm_set_clock** to set/change the current clock for all threads:
     
     vm_set_clock(vm, time.time())
 
-### 3.4 Execution
+### Execution
 
 In order to run a program call the **vm_run_all_threads** function. After a *run* you have to test for VM's termination with **vm_is_finished**.
 
