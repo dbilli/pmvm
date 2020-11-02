@@ -23,14 +23,6 @@ def STOP(r):
     return (OP_CODE_STOP, r)
 
 #----------------------------------------------------------------------#
-
-OP_CODE_SETRESPAWN = 3 
-if __debug__: OP_CODE_SETRESPAWN = 'SETRESPAWN'
-
-def SETRESPAWN(b):
-    return (OP_CODE_SETRESPAWN, b)
-
-#----------------------------------------------------------------------#
 #----------------------------------------------------------------------#
 #----------------------------------------------------------------------#
 # REGISTRY                                                             #
@@ -51,6 +43,18 @@ if __debug__: OP_CODE_SET = 'SET'
 
 def SET(val):
     return ( OP_CODE_SET, val)
+
+#----------------------------------------------------------------------#
+
+# Equivalent to
+#      REGFLUSH(n)
+#      SET(val)
+#
+OP_CODE_FLUSHSET = 110
+if __debug__: OP_CODE_FLUSHSET = 'FLUSHSET'
+
+def FLUSHSET(n, val):
+    return ( OP_CODE_FLUSHSET, (n,val))
 
 #----------------------------------------------------------------------#
 #----------------------------------------------------------------------#
@@ -336,6 +340,23 @@ OP_CODE_GETATTRLV = 511
 def GETATTRLV():
     return ( OP_CODE_GETATTRLV, None )
 
+
+#
+# Direct accesso context symbols
+#
+OP_CODE_CONTEXT_LPUSH = 530
+
+if __debug__: OP_CODE_CONTEXT_LPUSH  = 'CONTEXT_LPUSH'
+
+def CONTEXT_LPUSH(symbol, val):
+    return ( OP_CODE_CONTEXT_LPUSH, (symbol, val) )
+
+OP_CODE_CONTEXT_LPOP = 531
+if __debug__: OP_CODE_CONTEXT_LPUSH  = 'CONTEXT_LPOP'
+
+def CONTEXT_LPOP(symbol):
+    return ( OP_CODE_CONTEXT_LPOP, symbol )
+
 #----------------------------------------------------------------------#
 #----------------------------------------------------------------------#
 #----------------------------------------------------------------------#
@@ -480,6 +501,19 @@ if __debug__: OP_CODE_CALL_NATIVE = 'CALL_NATIVE'
 def CALL_NATIVE(fun_callable, n_args=0, n_kwargs=0):
     return ( OP_CODE_CALL_NATIVE, (fun_callable, n_args, n_kwargs) )
 
+#----------------------------------------------------------------------#
+#----------------------------------------------------------------------#
+#----------------------------------------------------------------------#
+# THREADING                                                            #
+#----------------------------------------------------------------------#
+#----------------------------------------------------------------------#
+#----------------------------------------------------------------------#
+
+OP_CODE_FORK = 700
+if __debug__: OP_CODE_FORK = 'FORK'
+
+def FORK(addresses):
+    return ( OP_CODE_FORK, addresses )
 
 #----------------------------------------------------------------------#
 #----------------------------------------------------------------------#
@@ -498,7 +532,6 @@ if __debug__: OP_CODE_OUTPUT = 'OUTPUT'
 def OUTPUT():
     return ( OP_CODE_OUTPUT, None )
 
-
 #
 # Read (or wait for) input data
 #
@@ -509,111 +542,4 @@ def INPUT():
     return (OP_CODE_INPUT, None)    
 
 
-
-
-#----------------------------------------------------------------------#
-#----------------------------------------------------------------------#
-#----------------------------------------------------------------------#
-# THREADING                                                            #
-#----------------------------------------------------------------------#
-#----------------------------------------------------------------------#
-#----------------------------------------------------------------------#
-
-OP_CODE_FORK = 700
-if __debug__: OP_CODE_FORK = 'FORK'
-
-def FORK(addresses):
-    return ( OP_CODE_FORK, addresses )
-
-
-#----------------------------------------------------------------------#
-
-#OP_CODE_SETTIMER  = 34
-#
-#def SETTIMER(seconds):
-#    return ( OP_CODE_SETTIMER , seconds )
-#    
-#----------------------------------------------------------------------#
-
-
-
-
-#----------------------------------------------------------------------#
-
-#
-# Indica che la virtualmachine sta aspettando un particolare tipo di input
-#
-
-#OP_CODE_INPUT_MATCH = 35
-#if __debug__: OP_CODE_INPUT_MATCH = 'INPUT_MATCH'
-#
-#def INPUT_MATCH():
-#    return (OP_CODE_INPUT_MATCH, None)    
-#
-
-
-
-#----------------------------------------------------------------------#
-# ARRAY                                                                #    
-#----------------------------------------------------------------------#
-
-#OP_CODE_ARRAY = 300
-#
-#def ARRAY(n):
-#    return (OP_CODE_ARRAY,n)
-
-#----------------------------------------------------------------------#
-
-
-
-
-#----------------------------------------------------------------------#
-#
-#OP_CODE_EQUAL  = 38
-#
-#def EQUAL(val, addr):
-#    return ( OP_CODE_EQUAL , (val, addr) )
-#
-##----------------------------------------------------------------------#
-#
-#OP_CODE_LT   = 39
-#
-#def LT(val, addr):
-#    return ( OP_CODE_LT	 , (val, addr) )
-#
-#----------------------------------------------------------------------#
-
-#OP_CODE_MATCH = 40
-#
-#def MATCH(flag=True):
-#    return (OP_CODE_SET, 0 if flag else -1)
-
-#----------------------------------------------------------------------#
-
-#OP_CODE_STACKPUSH  = 41 #'STACKPUSH' #
-#OP_CODE_STACKPOP   = 42 #'STACKPOP'  #<n>
-#OP_CODE_STACKGET   = 43 #'STACKGET'  #<pos>
-#OP_CODE_STACKSET   = 44 #'STACKSET'  #<pos>                Save <value> in stack[$sp+pos]
-#
-#OP_CODE_STACKPUSHV = 45 #'STACKPUSHV' #<value>              Append <valu> to stack and increm[$sp]
-#OP_CODE_STACKSETV  = 46 #'STACKSETV' #<pos> <value>        Save <value> in stack[$sp+pos]
-#
-#def STACKPUSH():      
-#    return (OP_CODE_STACKPUSH, None)
-#
-#def STACKPOP(n):           
-#    return (OP_CODE_STACKPOP, n)
-#
-#def STACKSET(pos):  
-#    return (OP_CODE_STACKSET, pos)
-#
-#def STACKGET(pos):         
-#    return (OP_CODE_STACKGET, pos)
-#
-#
-#def STACKPUSHV(value):  
-#    return (OP_CODE_STACKPUSHV, value)
-#
-#def STACKSETV(pos, value):  
-#    return (OP_CODE_STACKSETV, (pos,value))
 
